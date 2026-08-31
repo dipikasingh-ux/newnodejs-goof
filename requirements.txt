@@ -10,3 +10,4 @@ dotenv~=0.9.9
 flask~=2.3.3
 Flask-Cors~=3.0.10
 litellm~=1.77.3
+langgraph-checkpoint>=3.0.0 # not directly required, pinned by Snyk to avoid a vulnerability
