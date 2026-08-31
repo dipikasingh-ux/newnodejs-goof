@@ -1,0 +1,616 @@
+import org.springframework.boot.gradle.plugin.SpringBootPlugin
+
+plugins {
+    id 'org.springframework.boot' version "${springBootVersion}" apply false
+    id 'io.spring.dependency-management' version '1.1.7' apply false
+    id 'org.owasp.dependencycheck' version '12.1.1' apply false
+    id 'org.sonarqube' version '6.3.1.5724' apply false
+    id 'au.com.dius.pact' version '4.6.15' apply false
+}
+
+allprojects {
+    group = 'in.mpokket'
+    version = sdkVersion
+}
+
+subprojects {
+    // Skip java config for BOM (it uses java-platform plugin, not java)
+    if (project.name == 'bom') return
+
+    apply plugin: 'java'
+    apply plugin: 'java-library'
+    apply plugin: 'maven-publish'
+    apply plugin: 'jacoco'
+    apply plugin: 'org.springframework.boot'
+    apply plugin: 'io.spring.dependency-management'
+    apply plugin: 'org.owasp.dependencycheck'
+    apply plugin: 'org.sonarqube'
+
+    java {
+        toolchain {
+            languageVersion = JavaLanguageVersion.of(21)
+        }
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
+    }
+
+    repositories {
+        maven {
+            url = "https://stg-nexus.mpokket.org/repository/maven-public/"
+            credentials {
+                username = System.getenv('NEXUS_CREDENTIALS_USERNAME')
+                password = System.getenv('NEXUS_CREDENTIALS_PASSWORD')
+            }
+        }
+        mavenCentral()
+    }
+
+    dependencyManagement {
+        imports {
+            mavenBom "in.mpokket:mpokket-common-bom:${bomVersion}"
+            mavenBom "org.springframework.cloud:spring-cloud-dependencies:${springCloudVersion}"
+            mavenBom "org.testcontainers:testcontainers-bom:${testcontainersVersion}"
+        }
+        dependencies {
+            dependency 'com.fasterxml.jackson.core:jackson-annotations:2.22'
+            dependency 'com.fasterxml.jackson.core:jackson-databind:2.21.5'
+            dependency 'com.fasterxml.jackson.core:jackson-core:2.21.5'
+            dependency 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.21.5'
+            dependency 'com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.21.5'
+            dependency 'tools.jackson.core:jackson-databind:3.1.5'
+            dependency 'tools.jackson.core:jackson-core:3.1.5'
+            dependency 'org.apache.tomcat.embed:tomcat-embed-core:11.0.23'
+            dependency 'org.apache.tomcat.embed:tomcat-embed-websocket:11.0.23'
+            dependency 'org.apache.tomcat.embed:tomcat-embed-el:11.0.23'
+            dependency 'ch.qos.logback:logback-core:1.5.36'
+            dependency 'ch.qos.logback:logback-classic:1.5.36'
+            dependency 'org.springframework.retry:spring-retry:2.0.13'
+            dependency 'org.apache.httpcomponents.core5:httpcore5-h2:5.4.3'
+        }
+    }
+
+    configurations.all {
+        resolutionStrategy {
+            force 'com.fasterxml.jackson.core:jackson-annotations:2.22'
+            force 'com.fasterxml.jackson.core:jackson-databind:2.21.5'
+            force 'com.fasterxml.jackson.core:jackson-core:2.21.5'
+            force 'tools.jackson.core:jackson-databind:3.1.5'
+            force 'tools.jackson.core:jackson-core:3.1.5'
+            force 'org.apache.httpcomponents.core5:httpcore5-h2:5.4.3'
+        }
+    }
+
+    publishing {
+        publications {
+            maven(MavenPublication) {
+                from components.java
+                versionMapping {
+                    usage('java-api') { fromResolutionOf('runtimeClasspath') }
+                    usage('java-runtime') { fromResolutionResult() }
+                }
+            }
+        }
+        repositories {
+            maven {
+                name = "myNexus"
+                url = "https://stg-nexus.mpokket.org/repository/maven-snapshots/"
+                credentials {
+                    username = System.getenv('NEXUS_CREDENTIALS_USERNAME')
+                    password = System.getenv('NEXUS_CREDENTIALS_PASSWORD')
+                }
+            }
+        }
+    }
+
+    tasks.withType(GenerateModuleMetadata) {
+        suppressedValidationErrors.add('dependencies-without-versions')
+    }
+
+    sonarqube {
+        properties {
+            property 'sonar.host.url', 'http://sonarqube-sonarqube.devops-tools.svc.cluster.local:9000/sonarqube'
+            property 'sonar.java.source', 21
+            property 'sonar.junit.reportPaths', 'build/results'
+            property 'encoding', 'UTF-8'
+            property 'charSet', 'UTF-8'
+            property "sonar.coverage.jacoco.xmlReportPaths", "/build/reports/jacoco/test/jacocoTestReport.xml"
+        }
+    }
+
+    dependencies {
+        compileOnly 'org.projectlombok:lombok'
+        annotationProcessor 'org.projectlombok:lombok'
+        testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    }
+
+    test {
+        useJUnitPlatform()
+        systemProperty 'spring.profiles.active', 'test'
+    }
+
+    bootJar { enabled = false }
+
+    jacocoTestReport {
+        reports {
+            xml.required = true
+            csv.required = false
+            html.required = true
+        }
+    }
+
+    test.finalizedBy jacocoTestReport
+
+    dependencyCheck {
+        failBuildOnCVSS = 0
+        suppressionFile = "${rootDir}/dependency-check-suppressions.xml"
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Module: security-starter  (artifactId: mpokket-security-starter)
+// ---------------------------------------------------------------------------
+project(':security-starter') {
+    publishing {
+        publications {
+            maven(MavenPublication) { artifactId = 'mpokket-security-starter' }
+        }
+    }
+
+    sonarqube {
+        properties {
+            property 'sonar.projectKey', 'mpokket-security-starter'
+            property 'sonar.projectName', 'mpokket-security-starter'
+        }
+    }
+
+    jacocoTestCoverageVerification {
+        violationRules {
+            rule {
+                element = 'CLASS'
+                limit { counter = 'LINE'; value = 'COVEREDRATIO'; minimum = 0.8 }
+                excludes = ['**.ApplicationContextUtils.java', '**.model.**', '**.config.**']
+            }
+        }
+    }
+    check.dependsOn jacocoTestCoverageVerification
+
+    dependencies {
+        implementation 'org.springframework.boot:spring-boot-starter'
+        implementation 'org.springframework.boot:spring-boot-starter-web'
+        implementation 'tools.jackson.core:jackson-databind:3.1.5'
+        implementation 'tools.jackson.core:jackson-core:3.1.5'
+        implementation('com.fasterxml.jackson.core:jackson-annotations') {
+            exclude group: 'com.fasterxml.jackson.core', module: 'jackson-core'
+            exclude group: 'com.fasterxml.jackson.core', module: 'jackson-databind'
+        }
+        implementation 'jakarta.json:jakarta.json-api'
+        implementation 'org.glassfish:jakarta.json'
+        implementation 'org.yaml:snakeyaml'
+        implementation 'org.springframework.security:spring-security-core'
+        implementation 'org.eclipse.parsson:parsson:1.1.8'
+
+        api 'org.springframework.boot:spring-boot-starter-security'
+        api 'org.springframework.boot:spring-boot-starter-web'
+        api 'org.springframework.security:spring-security-config'
+        api 'org.springframework.security:spring-security-web'
+        api 'org.springframework:spring-web'
+        api 'org.springframework.security:spring-security-crypto'
+
+        testImplementation 'org.junit.jupiter:junit-jupiter'
+        testImplementation 'org.junit.jupiter:junit-jupiter-params'
+        testImplementation 'org.mockito:mockito-junit-jupiter'
+        testImplementation 'org.xmlunit:xmlunit-core'
+        testImplementation 'org.springframework.boot:spring-boot-starter-test'
+        testImplementation 'org.apache.groovy:groovy'
+        testImplementation 'org.spockframework:spock-core'
+        testImplementation 'org.spockframework:spock-spring'
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Module: microtypes-starter  (artifactId: micro-types)
+// ---------------------------------------------------------------------------
+project(':microtypes-starter') {
+    publishing {
+        publications {
+            maven(MavenPublication) { artifactId = 'micro-types' }
+        }
+    }
+
+    sonarqube {
+        properties {
+            property 'sonar.projectKey', 'micro-types'
+            property 'sonar.projectName', 'micro-types'
+        }
+    }
+
+    jacocoTestCoverageVerification {
+        violationRules {
+            rule {
+                element = 'CLASS'
+                enabled = true
+                limit { minimum = 0.8 }
+                limit { counter = 'LINE'; value = 'COVEREDRATIO'; minimum = 0.85 }
+                excludes = ['**.*Config*', '**.model.**', '**.pii.**']
+            }
+        }
+    }
+    check.dependsOn jacocoTestCoverageVerification
+
+    dependencies {
+        compileOnlyApi project(':security-starter')
+        compileOnlyApi 'tools.jackson.core:jackson-databind:3.1.5'
+        compileOnlyApi 'jakarta.persistence:jakarta.persistence-api'
+        compileOnlyApi 'org.springframework:spring-web'
+        compileOnlyApi 'org.springframework.security:spring-security-core'
+        compileOnlyApi 'org.springframework.security:spring-security-config'
+        compileOnlyApi 'org.springframework.security:spring-security-web'
+
+        implementation 'org.springframework.boot:spring-boot-starter'
+        implementation 'org.springframework.boot:spring-boot-starter-validation'
+        implementation 'jakarta.annotation:jakarta.annotation-api'
+        implementation 'jakarta.persistence:jakarta.persistence-api'
+        implementation 'jakarta.validation:jakarta.validation-api'
+        implementation 'org.yaml:snakeyaml'
+        implementation 'tools.jackson.core:jackson-databind:3.1.5'
+        implementation 'tools.jackson.core:jackson-core:3.1.5'
+        implementation 'com.fasterxml.jackson.core:jackson-annotations:2.22'
+
+        testImplementation 'org.springframework.boot:spring-boot-starter-test'
+        testImplementation project(':security-starter')
+        testImplementation 'tools.jackson.core:jackson-databind:3.1.5'
+        testImplementation 'org.junit.jupiter:junit-jupiter'
+    }
+
+    tasks.register('unitTest', Test) {
+        description = 'Runs the unit tests.'
+        group = 'verification'
+        useJUnitPlatform()
+        filter { excludeTestsMatching('*IntegrationTest*') }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Module: logging-starter  (artifactId: mpokket-logging-starter)
+// ---------------------------------------------------------------------------
+project(':logging-starter') {
+    publishing {
+        publications {
+            maven(MavenPublication) { artifactId = 'mpokket-logging-starter' }
+        }
+    }
+
+    sonarqube {
+        properties {
+            property 'sonar.projectKey', 'mpokket-logging-starter'
+            property 'sonar.projectName', 'mpokket-logging-starter'
+        }
+    }
+
+    tasks.withType(JavaCompile).configureEach {
+        options.compilerArgs += ['-Xlint:deprecation', '-Xlint:unchecked']
+    }
+
+    jacocoTestCoverageVerification {
+        violationRules {
+            rule {
+                element = 'CLASS'
+                limit { counter = 'LINE'; value = 'COVEREDRATIO'; minimum = 0.85 }
+                excludes = ['**.*Config*', '**.model.**', '**.*Exception', '**.*ContextWrapper', '**.logback.contrib.**']
+            }
+        }
+    }
+    check.dependsOn jacocoTestCoverageVerification
+
+    dependencies {
+        implementation 'org.springframework.boot:spring-boot-starter-actuator'
+        implementation 'tools.jackson.core:jackson-databind:3.1.5'
+        implementation 'tools.jackson.core:jackson-core:3.1.5'
+        implementation('com.fasterxml.jackson.core:jackson-annotations') {
+            exclude group: 'com.fasterxml.jackson.core', module: 'jackson-core'
+            exclude group: 'com.fasterxml.jackson.core', module: 'jackson-databind'
+        }
+        implementation 'org.yaml:snakeyaml'
+        implementation 'org.apache.commons:commons-text'
+
+        compileOnly project(':microtypes-starter')
+        compileOnly 'io.micrometer:micrometer-tracing-bridge-otel'
+        compileOnly 'org.springframework:spring-web'
+        compileOnly 'org.springframework.security:spring-security-core'
+        compileOnly 'org.springframework.security:spring-security-config'
+        compileOnly 'org.springframework.security:spring-security-web'
+        compileOnly 'org.springframework:spring-webflux'
+        compileOnly 'jakarta.servlet:jakarta.servlet-api'
+
+        testImplementation 'org.mockito:mockito-core'
+        testImplementation 'io.projectreactor:reactor-test'
+        testImplementation project(':microtypes-starter')
+        testImplementation 'org.springframework.boot:spring-boot-starter-test'
+        testImplementation 'io.micrometer:micrometer-tracing-bridge-otel'
+        testImplementation 'org.springframework:spring-web'
+        testImplementation 'org.springframework:spring-webflux'
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Module: web-starter  (artifactId: mpokket-web-starter)
+// ---------------------------------------------------------------------------
+project(':web-starter') {
+    apply plugin: 'au.com.dius.pact'
+
+    publishing {
+        publications {
+            maven(MavenPublication) { artifactId = 'mpokket-web-starter' }
+        }
+    }
+
+    sonarqube {
+        properties {
+            property 'sonar.projectKey', 'mpokket-web-starter'
+            property 'sonar.projectName', 'mpokket-web-starter'
+            property "sonar.coverage.jacoco.xmlReportPaths", "build/reports/jacocoReport.xml"
+        }
+    }
+
+    jacocoTestCoverageVerification {
+        violationRules {
+            rule {
+                element = 'CLASS'
+                limit { counter = 'LINE'; value = 'COVEREDRATIO'; minimum = 0.85 }
+                excludes = ['**.*Config*', '**.model.**', '**.*Exception', '**.exception.*BusinessErrorCode', '**.rest.client.CustomResponseErrorHandler']
+            }
+        }
+    }
+    check.dependsOn jacocoTestCoverageVerification
+
+    dependencies {
+        api 'org.springframework.boot:spring-boot-starter-actuator'
+        api 'org.springframework.boot:spring-boot-starter-web'
+        api 'org.springframework.boot:spring-boot-starter-webflux'
+        api 'org.springframework.boot:spring-boot-starter-cache'
+        api 'org.apache.commons:commons-collections4'
+        api 'org.apache.commons:commons-lang3'
+        api 'org.fluentd:fluent-logger'
+        api 'org.springdoc:springdoc-openapi-starter-webmvc-ui'
+        api 'com.github.ben-manes.caffeine:caffeine'
+        api project(':microtypes-starter')
+        api project(':logging-starter')
+        api 'org.yaml:snakeyaml'
+        api 'io.micrometer:micrometer-tracing-bridge-otel'
+        api 'org.springframework.boot:spring-boot-starter-opentelemetry'
+        api 'io.github.resilience4j:resilience4j-circuitbreaker:2.3.0'
+        api 'io.github.resilience4j:resilience4j-retry:2.3.0'
+        api 'io.github.resilience4j:resilience4j-ratelimiter:2.3.0'
+        api 'io.github.resilience4j:resilience4j-micrometer:2.3.0'
+        api 'io.github.resilience4j:resilience4j-reactor:2.3.0'
+
+        implementation 'jakarta.annotation:jakarta.annotation-api'
+        implementation 'tools.jackson.core:jackson-databind:3.1.5'
+        implementation 'tools.jackson.core:jackson-core:3.1.5'
+        implementation('com.fasterxml.jackson.core:jackson-annotations') {
+            exclude group: 'com.fasterxml.jackson.core', module: 'jackson-core'
+            exclude group: 'com.fasterxml.jackson.core', module: 'jackson-databind'
+        }
+        implementation 'org.springframework.security:spring-security-crypto'
+
+        compileOnly 'jakarta.servlet:jakarta.servlet-api'
+        compileOnly 'org.springframework.security:spring-security-web'
+        compileOnly 'org.springframework.security:spring-security-core'
+
+        developmentOnly 'org.springframework.boot:spring-boot-devtools'
+
+        annotationProcessor 'org.springframework.boot:spring-boot-configuration-processor'
+
+        testImplementation 'org.mockito:mockito-core'
+        testImplementation 'org.springframework.boot:spring-boot-starter-test'
+        testImplementation 'org.springframework.boot:spring-boot-starter-validation'
+        testImplementation 'io.projectreactor:reactor-test'
+        testImplementation 'org.springframework.cloud:spring-cloud-starter-contract-verifier'
+        testImplementation 'org.springframework.security:spring-security-test'
+        testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
+        testImplementation 'jakarta.validation:jakarta.validation-api'
+    }
+
+    test { maxParallelForks = 3 }
+}
+
+// ---------------------------------------------------------------------------
+// Module: kafka-starter  (artifactId: mpokket-kafka-starter)
+// ---------------------------------------------------------------------------
+project(':kafka-starter') {
+    publishing {
+        publications {
+            maven(MavenPublication) { artifactId = 'mpokket-kafka-starter' }
+        }
+    }
+
+    sonarqube {
+        properties {
+            property 'sonar.projectKey', 'kafka-service'
+            property 'sonar.projectName', 'kafka-service'
+        }
+    }
+
+    jacocoTestCoverageVerification {
+        violationRules {
+            rule {
+                element = 'CLASS'
+                limit { counter = 'LINE'; value = 'COVEREDRATIO'; minimum = 0.85 }
+                excludes = ['**.config*', '**.aspect*', '**.message.**', '**.entity.**', '**.kafka.*KafkaStarterApplication']
+            }
+        }
+    }
+    check.dependsOn jacocoTestCoverageVerification
+
+    dependencies {
+        api 'org.springframework.kafka:spring-kafka'
+        api 'org.springframework.boot:spring-boot-starter-actuator'
+        api 'org.springframework:spring-aop'
+        api 'org.aspectj:aspectjweaver'
+        api 'tools.jackson.core:jackson-core'
+        api 'tools.jackson.core:jackson-databind'
+        api 'com.fasterxml.jackson.core:jackson-databind'
+        api 'software.amazon.msk:aws-msk-iam-auth'
+        api 'org.xerial.snappy:snappy-java:1.1.10.7'
+        api 'org.yaml:snakeyaml'
+        api 'org.springframework.boot:spring-boot-starter-validation'
+
+        implementation 'org.springframework.boot:spring-boot-starter'
+
+        testImplementation 'org.junit.jupiter:junit-jupiter'
+        testImplementation 'org.springframework.boot:spring-boot-starter-test'
+        testImplementation 'org.springframework.kafka:spring-kafka-test'
+        testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
+        testImplementation 'org.testcontainers:testcontainers-kafka'
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Module: rabbitmq-starter  (artifactId: mpokket-rabbitmq-starter)
+// ---------------------------------------------------------------------------
+project(':rabbitmq-starter') {
+    publishing {
+        publications {
+            maven(MavenPublication) { artifactId = 'mpokket-rabbitmq-starter' }
+        }
+    }
+
+    sonarqube {
+        properties {
+            property 'sonar.projectKey', 'mpokket-rabbitmq-starter'
+            property 'sonar.projectName', 'mpokket-rabbitmq-starter'
+        }
+    }
+
+    jacocoTestCoverageVerification {
+        violationRules {
+            rule {
+                element = 'CLASS'
+                limit { counter = 'LINE'; value = 'COVEREDRATIO'; minimum = 0.9 }
+            }
+        }
+    }
+    test.finalizedBy jacocoTestReport
+
+    dependencies {
+        implementation 'org.springframework.boot:spring-boot-starter-amqp'
+        implementation 'org.springframework.boot:spring-boot-starter-web'
+        implementation 'org.springframework.boot:spring-boot-starter-cache'
+        implementation 'com.github.ben-manes.caffeine:caffeine'
+        implementation 'tools.jackson.core:jackson-databind'
+        implementation 'org.springframework.retry:spring-retry'
+
+        testImplementation 'org.springframework.boot:spring-boot-starter-test'
+        testImplementation 'org.springframework.amqp:spring-rabbit-test'
+    }
+
+    tasks.register('unitTest', Test) {
+        description = 'Runs the unit tests.'
+        group = 'verification'
+        useJUnitPlatform()
+        filter { excludeTestsMatching('*IntegrationTest*') }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Module: aws-starter  (artifactId: mpokket-aws-starter)
+// ---------------------------------------------------------------------------
+project(':aws-starter') {
+    publishing {
+        publications {
+            maven(MavenPublication) { artifactId = 'mpokket-aws-starter' }
+        }
+    }
+
+    sonarqube {
+        properties {
+            property 'sonar.projectKey', 'mpokket-aws-s3-starter'
+            property 'sonar.projectName', 'mpokket-aws-s3-starter'
+            property "sonar.coverage.jacoco.xmlReportPaths", "build/reports/jacocoReport.xml"
+        }
+    }
+
+    jacocoTestCoverageVerification {
+        violationRules {
+            rule {
+                element = 'CLASS'
+                limit { counter = 'LINE'; value = 'COVEREDRATIO'; minimum = 0.85 }
+                excludes = ['**.config.**', '**.model.**', '**.*exception', '**MapperImpl', '**.constant.**']
+            }
+        }
+    }
+    check.dependsOn jacocoTestCoverageVerification
+
+    dependencies {
+        implementation project(':web-starter')
+        implementation 'org.mapstruct:mapstruct'
+        implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui'
+        implementation 'jakarta.json:jakarta.json-api'
+        implementation 'org.springframework.cloud:spring-cloud-starter-bootstrap'
+
+        compileOnly 'software.amazon.awssdk:s3'
+
+        annotationProcessor 'org.mapstruct:mapstruct-processor'
+        annotationProcessor 'org.projectlombok:lombok-mapstruct-binding'
+
+        testImplementation 'org.springframework.boot:spring-boot-starter-test'
+        testImplementation 'software.amazon.awssdk:s3'
+    }
+
+    test { maxParallelForks = 3 }
+
+    tasks.register('integrationTest', Test) {
+        description = 'Runs the integration tests.'
+        group = 'verification'
+        useJUnitPlatform()
+        filter { includeTestsMatching '*IntegrationTest*' }
+    }
+
+    tasks.register('unitTest', Test) {
+        description = 'Runs the unit tests.'
+        group = 'verification'
+        useJUnitPlatform()
+        filter { excludeTestsMatching('*IntegrationTest*') }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Module: cache-connector  (artifactId: mpokket-cache-connector)
+// ---------------------------------------------------------------------------
+project(':cache-connector') {
+    publishing {
+        publications {
+            maven(MavenPublication) { artifactId = 'mpokket-cache-connector' }
+        }
+    }
+
+    sonarqube {
+        properties {
+            property 'sonar.projectKey', 'mpokket-cache-connector'
+            property 'sonar.projectName', 'mpokket-cache-connector'
+        }
+    }
+
+    jacocoTestCoverageVerification {
+        violationRules {
+            rule {
+                limit { minimum = 0.85 }
+            }
+        }
+    }
+    check.dependsOn jacocoTestCoverageVerification
+
+    dependencies {
+        implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+        implementation 'io.lettuce:lettuce-core'
+        implementation 'org.apache.commons:commons-pool2'
+        implementation 'tools.jackson.core:jackson-databind:3.1.5'
+
+        annotationProcessor 'org.springframework.boot:spring-boot-configuration-processor'
+
+        testImplementation 'org.springframework.boot:spring-boot-starter-test'
+        testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
+        testImplementation 'org.testcontainers:testcontainers'
+        testImplementation 'com.fasterxml.jackson.core:jackson-databind'
+    }
+}
