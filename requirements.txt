@@ -1,0 +1,12 @@
+langchain==0.3.26
+langchain-community==0.3.27
+langchain-core==0.3.69
+langchain-google-genai==2.1.8
+langgraph==0.6.3
+pydantic==2.11.7
+python-dotenv~=1.1.1
+requests~=2.32.4
+dotenv~=0.9.9
+flask~=2.3.3
+Flask-Cors~=3.0.10
+litellm~=1.77.3
